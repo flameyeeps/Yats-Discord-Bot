@@ -41,7 +41,14 @@ async function handleCommand(interaction) {
     }
     const category = interaction.options.getString("category");
     const role = interaction.options.getRole("role");
-    if (role.managed) {
+    if (!role) {
+  return interaction.reply({
+    content: "Please select a valid role.",
+    ephemeral: true
+  });
+}
+
+if (role.managed) {
       return interaction.reply({ content: "That is an integration-managed role and cannot be assigned.", ephemeral: true });
     }
     await updateGuild(guild.id, data => { data.roles[category] = role.id; });
