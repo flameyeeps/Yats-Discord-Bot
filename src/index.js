@@ -29,6 +29,10 @@ function truncate(value, max = 900) {
     : value;
 }
 
+function getGuildId(interaction) {
+  return interaction.guildId || interaction.guild?.id || null;
+}
+
 async function sendStaffLog(guild, embed) {
   if (!guild) return;
 
@@ -45,31 +49,78 @@ async function sendStaffLog(guild, embed) {
 }
 
 async function handleCommand(interaction) {
-  if (!interaction.inGuild()) {
-    console.log("Guild debug:", {
-  guildId: interaction.guildId,
-  guild: interaction.guild?.id,
-  channelId: interaction.channelId,
-  command: interaction.commandName
-});
+  const guildId = getGuildId(interaction);
+  const { commandName, guild, user } = interaction;
+
+  console.log("[Yats Debug]", {
+    command: commandName,
+    guildId,
+    guildAvailable: Boolean(guild),
+    channelId: interaction.channelId,
+    inGuild: interaction.inGuild()
+  });
+
+  // PING
+  if (commandName === "ping") {
     return interaction.reply({
-      content: "Yats Bot commands must be used in a server.",
+      content: `Pong! 🏓 Latency: ${client.ws.ping}ms`,
       ephemeral: true
     });
   }
 
-  const { commandName, guild, member, user } = interaction;
+  // HELP
+  if (commandName === "help") {
+    return interaction.reply({
+      content: [
+        "**Yats Bot Commands**",
+        "",
+        "**General**",
+        "`/ping` — Check bot response.",
+        "`/help` — Show this help menu.",
+        "`/report` — Report a member.",
+        "`/bug` — Report a game bug.",
+        "",
+        "**Staff configuration**",
+        "`/setrole` — Configure a staff role.",
+        "`/roles` — View staff roles.",
+        "`/setlogchannel` — Set the log channel.",
+        "",
+        "**Moderation**",
+        "`/warn` — Record a warning.",
+        "`/warnings` — View warnings.",
+        "`/clearwarnings` — Clear warnings.",
+        "`/purge` — Delete recent messages.",
+        "`/lock` — Lock a channel.",
+        "`/unlock` — Unlock a channel.",
+        "",
+        "**Support**",
+        "`/reports` — View reports.",
+        "`/resolve` — Resolve a report.",
+        "",
+        "**Game staff and developers**",
+        "`/announce` — Send an announcement.",
+        "`/bugs` — View bug reports.",
+        "`/fixbug` — Mark a bug as fixed."
+      ].join("\n"),
+      ephemeral: true
+    });
+  }
 
-  // Use the interaction's server ID safely.
-  const guildId = interaction.guildId;
-
+  // Every command below this point requires a server.
   if (!guildId || !guild) {
+    console.error("[Yats] Server context missing:", {
+      guildId,
+      guild: guild?.id,
+      commandName
+    });
+
     return interaction.reply({
-      content: "This command must be used inside a server.",
+      content: "This command needs to be used inside a Discord server. Please check that Yats is installed as a server bot.",
       ephemeral: true
     });
   }
 
+  const member = interaction.member;
   const config = getGuild(guildId);
 
   // SET ROLE
@@ -93,7 +144,7 @@ async function handleCommand(interaction) {
 
     if (role.managed) {
       return interaction.reply({
-        content: "That is an integration-managed role and cannot be assigned.",
+        content: "That role is integration-managed and cannot be assigned.",
         ephemeral: true
       });
     }
@@ -108,7 +159,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // VIEW ROLES
+  // ROLES
   if (commandName === "roles") {
     const labels = {
       moderator: "Moderator",
@@ -118,11 +169,9 @@ async function handleCommand(interaction) {
     };
 
     const lines = Object.entries(labels).map(([key, label]) =>
-      `**${label}:** ${
-        config.roles[key]
-          ? `<@&${config.roles[key]}>`
-          : "*Not configured*"
-      }`
+      `**${label}:** ${config.roles[key]
+        ? `<@&${config.roles[key]}>`
+        : "*Not configured*"}`
     );
 
     return interaction.reply({
@@ -142,7 +191,7 @@ async function handleCommand(interaction) {
 
     const channel = interaction.options.getChannel("channel");
 
-    if (!channel || !channel.isTextBased()) {
+    if (!channel?.isTextBased()) {
       return interaction.reply({
         content: "Please select a valid text channel.",
         ephemeral: true
@@ -154,7 +203,7 @@ async function handleCommand(interaction) {
     });
 
     return interaction.reply({
-      content: `Staff logs and new reports will be sent to ${channel}.`,
+      content: `Staff logs and reports will be sent to ${channel}.`,
       ephemeral: true
     });
   }
@@ -198,14 +247,14 @@ async function handleCommand(interaction) {
     });
   }
 
-  // VIEW WARNINGS
+  // WARNINGS
   if (commandName === "warnings") {
     if (!(await requireCategory(interaction, "moderator"))) return;
 
     const target = interaction.options.getUser("member");
-    const items = config.warnings
-      .filter(w => w.userId === target.id)
-      .slice(-10);
+    const items = config.warnings.filter(
+      w => w.userId === target.id
+    ).slice(-10);
 
     const body = items.length
       ? items.map(w =>
@@ -250,7 +299,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // REPORT MEMBER
+  // REPORT
   if (commandName === "report") {
     const target = interaction.options.getUser("member");
     const reason = interaction.options.getString("reason");
@@ -280,18 +329,18 @@ async function handleCommand(interaction) {
     );
 
     return interaction.reply({
-      content: `Your report **#${report.id}** has been sent to the staff team.`
+      content: `Your report **#${report.id}** has been sent to staff.`
     });
   }
 
-  // VIEW REPORTS
+  // REPORTS
   if (commandName === "reports") {
     if (
       !hasCategory(member, "support") &&
       !hasCategory(member, "moderator")
     ) {
       return interaction.reply({
-        content: "You need the configured Support or Moderator role to view reports.",
+        content: "You need the Support or Moderator role to view reports.",
         ephemeral: true
       });
     }
@@ -312,14 +361,14 @@ async function handleCommand(interaction) {
     });
   }
 
-  // RESOLVE REPORT
+  // RESOLVE
   if (commandName === "resolve") {
     if (
       !hasCategory(member, "support") &&
       !hasCategory(member, "moderator")
     ) {
       return interaction.reply({
-        content: "You need the configured Support or Moderator role to resolve reports.",
+        content: "You need the Support or Moderator role to resolve reports.",
         ephemeral: true
       });
     }
@@ -360,14 +409,14 @@ async function handleCommand(interaction) {
     });
   }
 
-  // ANNOUNCEMENT
+  // ANNOUNCE
   if (commandName === "announce") {
     if (!(await requireCategory(interaction, "game_staff"))) return;
 
     const channel = interaction.options.getChannel("channel");
     const message = interaction.options.getString("message");
 
-    if (!channel || !channel.isTextBased()) {
+    if (!channel?.isTextBased()) {
       return interaction.reply({
         content: "Please select a valid text channel.",
         ephemeral: true
@@ -388,7 +437,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // REPORT BUG
+  // BUG
   if (commandName === "bug") {
     const description = interaction.options.getString("description");
 
@@ -418,14 +467,14 @@ async function handleCommand(interaction) {
     });
   }
 
-  // VIEW BUGS
+  // BUGS
   if (commandName === "bugs") {
     if (
       !hasCategory(member, "game_staff") &&
       !hasCategory(member, "developer")
     ) {
       return interaction.reply({
-        content: "You need the configured Game Staff or Developer role to view bugs.",
+        content: "You need the Game Staff or Developer role to view bugs.",
         ephemeral: true
       });
     }
@@ -438,7 +487,7 @@ async function handleCommand(interaction) {
       ? items.map(b =>
           `**#${b.id}** | <@${b.reporterId}> — ${truncate(b.description, 180)}`
         ).join("\n")
-      : "There are no open bug reports.";
+      : "There are no open bugs.";
 
     return interaction.reply({
       content: `**Open Yats bugs**\n${body}`,
@@ -446,14 +495,14 @@ async function handleCommand(interaction) {
     });
   }
 
-  // MARK BUG FIXED
+  // FIX BUG
   if (commandName === "fixbug") {
     if (
       !hasCategory(member, "game_staff") &&
       !hasCategory(member, "developer")
     ) {
       return interaction.reply({
-        content: "You need the configured Game Staff or Developer role to mark bugs fixed.",
+        content: "You need the Game Staff or Developer role to mark bugs fixed.",
         ephemeral: true
       });
     }
@@ -494,7 +543,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // PURGE MESSAGES
+  // PURGE
   if (commandName === "purge") {
     if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
       return interaction.reply({
@@ -505,15 +554,22 @@ async function handleCommand(interaction) {
 
     const amount = interaction.options.getInteger("amount");
 
+    if (!interaction.channel?.bulkDelete) {
+      return interaction.reply({
+        content: "This command cannot be used in this channel.",
+        ephemeral: true
+      });
+    }
+
     const deleted = await interaction.channel.bulkDelete(amount, true);
 
     return interaction.reply({
-      content: `Deleted **${deleted.size}** recent messages. Discord does not bulk-delete messages older than 14 days.`,
+      content: `Deleted **${deleted.size}** recent messages.`,
       ephemeral: true
     });
   }
 
-  // LOCK / UNLOCK CHANNEL
+  // LOCK / UNLOCK
   if (commandName === "lock" || commandName === "unlock") {
     if (!member.permissions.has(PermissionFlagsBits.ManageChannels)) {
       return interaction.reply({
@@ -538,9 +594,8 @@ async function handleCommand(interaction) {
     });
   }
 
-  // UNKNOWN COMMAND
   return interaction.reply({
-    content: "I don't recognize that command.",
+    content: "Unknown command.",
     ephemeral: true
   });
 }
@@ -556,12 +611,11 @@ client.on("interactionCreate", async interaction => {
     await handleCommand(interaction);
   } catch (error) {
     console.error(
-      `Command /${interaction.commandName} failed:`,
+      `[Yats] Command /${interaction.commandName} failed:`,
       error
     );
 
-    const message =
-      "Something went wrong while running that command. Check the bot console for details.";
+    const message = "Something went wrong while running that command. Check Railway logs.";
 
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp({
