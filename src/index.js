@@ -9,6 +9,7 @@ const {
 } = require("discord.js");
 
 const { load, getGuild, updateGuild } = require("./storage");
+
 const {
   isAdministrator,
   hasCategory,
@@ -22,8 +23,13 @@ const client = new Client({
   ]
 });
 
+// ----------------------------------
+// HELPERS
+// ----------------------------------
+
 function truncate(value, max = 900) {
   value = String(value ?? "");
+
   return value.length > max
     ? `${value.slice(0, max - 3)}...`
     : value;
@@ -33,10 +39,49 @@ function getGuildId(interaction) {
   return interaction.guildId || interaction.guild?.id || null;
 }
 
+async function getServerContext(interaction) {
+  const guildId = getGuildId(interaction);
+
+  if (!guildId) {
+    return {
+      guild: null,
+      member: null
+    };
+  }
+
+  let guild = interaction.guild;
+
+  if (!guild) {
+    guild = await client.guilds.fetch(guildId).catch(error => {
+      console.error("[Yats] Guild fetch failed:", error);
+      return null;
+    });
+  }
+
+  if (!guild) {
+    return {
+      guild: null,
+      member: null
+    };
+  }
+
+  const member = await guild.members.fetch(interaction.user.id)
+    .catch(error => {
+      console.error("[Yats] Member fetch failed:", error);
+      return null;
+    });
+
+  return {
+    guild,
+    member
+  };
+}
+
 async function sendStaffLog(guild, embed) {
   if (!guild) return;
 
   const config = getGuild(guild.id);
+
   if (!config.logChannelId) return;
 
   const channel = await guild.channels
@@ -44,23 +89,26 @@ async function sendStaffLog(guild, embed) {
     .catch(() => null);
 
   if (channel?.isTextBased()) {
-    await channel.send({ embeds: [embed] }).catch(console.error);
+    await channel.send({
+      embeds: [embed]
+    }).catch(console.error);
   }
 }
 
 async function handleCommand(interaction) {
-  const guildId = getGuildId(interaction);
-  const { commandName, guild, user } = interaction;
+  const { commandName, user } = interaction;
 
-  console.log("[Yats Debug]", {
+  console.log("[Yats Debug] Command received:", {
     command: commandName,
-    guildId,
-    guildAvailable: Boolean(guild),
-    channelId: interaction.channelId,
-    inGuild: interaction.inGuild()
+    guildId: interaction.guildId,
+    inGuild: interaction.inGuild(),
+    channelId: interaction.channelId
   });
 
+  // ----------------------------------
   // PING
+  // ----------------------------------
+
   if (commandName === "ping") {
     return interaction.reply({
       content: `Pong! 🏓 Latency: ${client.ws.ping}ms`,
@@ -68,7 +116,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // HELP
+  // ----------------------------------
+
   if (commandName === "help") {
     return interaction.reply({
       content: [
@@ -81,7 +132,7 @@ async function handleCommand(interaction) {
         "`/bug` — Report a game bug.",
         "",
         "**Staff configuration**",
-        "`/setrole` — Configure a staff role.",
+        "`/setrole` — Configure staff roles.",
         "`/roles` — View staff roles.",
         "`/setlogchannel` — Set the log channel.",
         "",
@@ -89,7 +140,7 @@ async function handleCommand(interaction) {
         "`/warn` — Record a warning.",
         "`/warnings` — View warnings.",
         "`/clearwarnings` — Clear warnings.",
-        "`/purge` — Delete recent messages.",
+        "`/purge` — Delete messages.",
         "`/lock` — Lock a channel.",
         "`/unlock` — Unlock a channel.",
         "",
@@ -106,24 +157,33 @@ async function handleCommand(interaction) {
     });
   }
 
-  // Every command below this point requires a server.
-  if (!guildId || !guild) {
-    console.error("[Yats] Server context missing:", {
-      guildId,
-      guild: guild?.id,
-      commandName
+  // ----------------------------------
+  // LOAD SERVER AND MEMBER
+  // ----------------------------------
+
+  const { guild, member } = await getServerContext(interaction);
+
+  if (!guild || !member) {
+    console.error("[Yats] Missing server/member context:", {
+      command: commandName,
+      guildId: interaction.guildId,
+      guildLoaded: Boolean(guild),
+      memberLoaded: Boolean(member)
     });
 
     return interaction.reply({
-      content: "This command needs to be used inside a Discord server. Please check that Yats is installed as a server bot.",
+      content: "Yats couldn't load your Discord server or membership. Make sure the bot is installed in this server and try again.",
       ephemeral: true
     });
   }
 
-  const member = interaction.member;
+  const guildId = guild.id;
   const config = getGuild(guildId);
 
+  // ----------------------------------
   // SET ROLE
+  // ----------------------------------
+
   if (commandName === "setrole") {
     if (!isAdministrator(member)) {
       return interaction.reply({
@@ -159,7 +219,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // ROLES
+  // ----------------------------------
+
   if (commandName === "roles") {
     const labels = {
       moderator: "Moderator",
@@ -169,9 +232,11 @@ async function handleCommand(interaction) {
     };
 
     const lines = Object.entries(labels).map(([key, label]) =>
-      `**${label}:** ${config.roles[key]
-        ? `<@&${config.roles[key]}>`
-        : "*Not configured*"}`
+      `**${label}:** ${
+        config.roles[key]
+          ? `<@&${config.roles[key]}>`
+          : "*Not configured*"
+      }`
     );
 
     return interaction.reply({
@@ -180,7 +245,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // SET LOG CHANNEL
+  // ----------------------------------
+
   if (commandName === "setlogchannel") {
     if (!isAdministrator(member)) {
       return interaction.reply({
@@ -208,7 +276,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // WARN
+  // ----------------------------------
+
   if (commandName === "warn") {
     if (!(await requireCategory(interaction, "moderator"))) return;
 
@@ -247,18 +318,22 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // WARNINGS
+  // ----------------------------------
+
   if (commandName === "warnings") {
     if (!(await requireCategory(interaction, "moderator"))) return;
 
     const target = interaction.options.getUser("member");
-    const items = config.warnings.filter(
-      w => w.userId === target.id
-    ).slice(-10);
+
+    const items = config.warnings
+      .filter(w => w.userId === target.id)
+      .slice(-10);
 
     const body = items.length
       ? items.map(w =>
-          `**#${w.id}** — ${w.reason} (by <@${w.moderatorId}>)`
+          `**#${w.id}** — ${truncate(w.reason, 180)} (by <@${w.moderatorId}>)`
         ).join("\n")
       : "No warnings recorded.";
 
@@ -268,7 +343,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // CLEAR WARNINGS
+  // ----------------------------------
+
   if (commandName === "clearwarnings") {
     if (!(await requireCategory(interaction, "moderator"))) return;
 
@@ -277,9 +355,11 @@ async function handleCommand(interaction) {
 
     const count = await updateGuild(guildId, data => {
       const before = data.warnings.length;
+
       data.warnings = data.warnings.filter(
         w => w.userId !== target.id
       );
+
       return before - data.warnings.length;
     });
 
@@ -299,7 +379,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // REPORT
+  // ----------------------------------
+
   if (commandName === "report") {
     const target = interaction.options.getUser("member");
     const reason = interaction.options.getString("reason");
@@ -315,6 +398,7 @@ async function handleCommand(interaction) {
       };
 
       data.reports.push(item);
+
       return item;
     });
 
@@ -333,7 +417,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // REPORTS
+  // ----------------------------------
+
   if (commandName === "reports") {
     if (
       !hasCategory(member, "support") &&
@@ -361,7 +448,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // RESOLVE
+  // ----------------------------------
+
   if (commandName === "resolve") {
     if (
       !hasCategory(member, "support") &&
@@ -409,7 +499,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // ANNOUNCE
+  // ----------------------------------
+
   if (commandName === "announce") {
     if (!(await requireCategory(interaction, "game_staff"))) return;
 
@@ -426,10 +519,14 @@ async function handleCommand(interaction) {
     const embed = new EmbedBuilder()
       .setTitle("Yats Announcement")
       .setDescription(message)
-      .setFooter({ text: `Posted by ${user.username}` })
+      .setFooter({
+        text: `Posted by ${user.username}`
+      })
       .setTimestamp();
 
-    await channel.send({ embeds: [embed] });
+    await channel.send({
+      embeds: [embed]
+    });
 
     return interaction.reply({
       content: `Announcement posted in ${channel}.`,
@@ -437,7 +534,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // BUG
+  // ----------------------------------
+
   if (commandName === "bug") {
     const description = interaction.options.getString("description");
 
@@ -451,6 +551,7 @@ async function handleCommand(interaction) {
       };
 
       data.bugs.push(item);
+
       return item;
     });
 
@@ -458,7 +559,9 @@ async function handleCommand(interaction) {
       guild,
       new EmbedBuilder()
         .setTitle(`New Yats bug #${bug.id}`)
-        .setDescription(`Reported by: ${user}\n${truncate(description)}`)
+        .setDescription(
+          `Reported by: ${user}\n${truncate(description)}`
+        )
         .setTimestamp()
     );
 
@@ -467,7 +570,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // BUGS
+  // ----------------------------------
+
   if (commandName === "bugs") {
     if (
       !hasCategory(member, "game_staff") &&
@@ -495,7 +601,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // FIX BUG
+  // ----------------------------------
+
   if (commandName === "fixbug") {
     if (
       !hasCategory(member, "game_staff") &&
@@ -543,7 +652,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // PURGE
+  // ----------------------------------
+
   if (commandName === "purge") {
     if (!member.permissions.has(PermissionFlagsBits.ManageMessages)) {
       return interaction.reply({
@@ -569,7 +681,10 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
   // LOCK / UNLOCK
+  // ----------------------------------
+
   if (commandName === "lock" || commandName === "unlock") {
     if (!member.permissions.has(PermissionFlagsBits.ManageChannels)) {
       return interaction.reply({
@@ -583,7 +698,9 @@ async function handleCommand(interaction) {
 
     await interaction.channel.permissionOverwrites.edit(
       everyone,
-      { SendMessages: value }
+      {
+        SendMessages: value
+      }
     );
 
     return interaction.reply({
@@ -594,14 +711,33 @@ async function handleCommand(interaction) {
     });
   }
 
+  // ----------------------------------
+  // UNKNOWN COMMAND
+  // ----------------------------------
+
   return interaction.reply({
     content: "Unknown command.",
     ephemeral: true
   });
 }
 
+// ----------------------------------
+// BOT EVENTS
+// ----------------------------------
+
 client.once("ready", () => {
+  console.log("--------------------------------");
   console.log(`Yats Bot is online as ${client.user.tag}`);
+  console.log(`Connected to ${client.guilds.cache.size} server(s).`);
+  console.log("--------------------------------");
+});
+
+client.on("guildCreate", guild => {
+  console.log(`[Yats] Joined server: ${guild.name} (${guild.id})`);
+});
+
+client.on("guildDelete", guild => {
+  console.log(`[Yats] Removed from server: ${guild.name} (${guild.id})`);
 });
 
 client.on("interactionCreate", async interaction => {
@@ -615,7 +751,8 @@ client.on("interactionCreate", async interaction => {
       error
     );
 
-    const message = "Something went wrong while running that command. Check Railway logs.";
+    const message =
+      "Something went wrong while running that command. Check Railway logs.";
 
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp({
@@ -631,11 +768,16 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
+// ----------------------------------
+// START BOT
+// ----------------------------------
+
 (async () => {
   if (!process.env.DISCORD_TOKEN) {
     throw new Error("Missing DISCORD_TOKEN in Railway Variables.");
   }
 
   await load();
+
   await client.login(process.env.DISCORD_TOKEN);
 })();
