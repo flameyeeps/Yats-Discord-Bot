@@ -46,6 +46,12 @@ async function sendStaffLog(guild, embed) {
 
 async function handleCommand(interaction) {
   if (!interaction.inGuild()) {
+    console.log("Guild debug:", {
+  guildId: interaction.guildId,
+  guild: interaction.guild?.id,
+  channelId: interaction.channelId,
+  command: interaction.commandName
+});
     return interaction.reply({
       content: "Yats Bot commands must be used in a server.",
       ephemeral: true
