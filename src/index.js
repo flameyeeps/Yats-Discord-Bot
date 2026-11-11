@@ -39,8 +39,6 @@ function getGuildId(interaction) {
   return interaction.guildId || interaction.guild?.id || null;
 }
 
-// Use the guild and member already available to the bot.
-// Avoid fetching a guild from Discord's API unnecessarily.
 async function getServerContext(interaction) {
   const guildId = getGuildId(interaction);
 
@@ -54,13 +52,16 @@ async function getServerContext(interaction) {
     null;
 
   if (!guild) {
-    console.error("[Yats] Guild not found in cache:", guildId);
+    console.error("[Yats] Guild not found in cache:", {
+      guildId,
+      cachedGuildIds: [...client.guilds.cache.keys()]
+    });
+
     return { guild: null, member: null };
   }
 
   let member = null;
 
-  // Prefer the actual GuildMember object from the interaction.
   if (
     interaction.member &&
     interaction.member.roles?.cache &&
@@ -69,12 +70,10 @@ async function getServerContext(interaction) {
     member = interaction.member;
   }
 
-  // Otherwise, try the cached member.
   if (!member) {
     member = guild.members.cache.get(interaction.user.id) || null;
   }
 
-  // Only fetch the member if the guild is already available.
   if (!member) {
     member = await guild.members.fetch(interaction.user.id)
       .catch(error => {
@@ -175,7 +174,7 @@ async function handleCommand(interaction) {
     });
 
     return interaction.reply({
-      content: "Yats couldn't load your server or membership. Please try again and check the Railway logs if it continues.",
+      content: "Yats couldn't load your Discord server or membership. Check the Railway logs.",
       ephemeral: true
     });
   }
@@ -708,7 +707,6 @@ async function handleCommand(interaction) {
     });
   }
 
-  // UNKNOWN COMMAND
   return interaction.reply({
     content: "Unknown command.",
     ephemeral: true
@@ -722,7 +720,13 @@ async function handleCommand(interaction) {
 client.once("ready", () => {
   console.log("--------------------------------");
   console.log(`Yats Bot is online as ${client.user.tag}`);
-  console.log(`Connected to ${client.guilds.cache.size} server(s).`);
+  console.log(`Connected servers: ${client.guilds.cache.size}`);
+  console.log("[Yats] Connected server IDs:");
+
+  for (const guild of client.guilds.cache.values()) {
+    console.log(`${guild.name}: ${guild.id}`);
+  }
+
   console.log("--------------------------------");
 });
 
