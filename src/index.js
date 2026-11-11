@@ -39,42 +39,51 @@ function getGuildId(interaction) {
   return interaction.guildId || interaction.guild?.id || null;
 }
 
+// Use the guild and member already available to the bot.
+// Avoid fetching a guild from Discord's API unnecessarily.
 async function getServerContext(interaction) {
   const guildId = getGuildId(interaction);
 
-  if (!guildId) {
-    return {
-      guild: null,
-      member: null
-    };
+  if (!guildId || !interaction.inGuild()) {
+    return { guild: null, member: null };
   }
 
-  let guild = interaction.guild;
+  const guild =
+    interaction.guild ||
+    client.guilds.cache.get(guildId) ||
+    null;
 
   if (!guild) {
-    guild = await client.guilds.fetch(guildId).catch(error => {
-      console.error("[Yats] Guild fetch failed:", error);
-      return null;
-    });
+    console.error("[Yats] Guild not found in cache:", guildId);
+    return { guild: null, member: null };
   }
 
-  if (!guild) {
-    return {
-      guild: null,
-      member: null
-    };
+  let member = null;
+
+  // Prefer the actual GuildMember object from the interaction.
+  if (
+    interaction.member &&
+    interaction.member.roles?.cache &&
+    typeof interaction.member.permissions?.has === "function"
+  ) {
+    member = interaction.member;
   }
 
-  const member = await guild.members.fetch(interaction.user.id)
-    .catch(error => {
-      console.error("[Yats] Member fetch failed:", error);
-      return null;
-    });
+  // Otherwise, try the cached member.
+  if (!member) {
+    member = guild.members.cache.get(interaction.user.id) || null;
+  }
 
-  return {
-    guild,
-    member
-  };
+  // Only fetch the member if the guild is already available.
+  if (!member) {
+    member = await guild.members.fetch(interaction.user.id)
+      .catch(error => {
+        console.error("[Yats] Member fetch failed:", error);
+        return null;
+      });
+  }
+
+  return { guild, member };
 }
 
 async function sendStaffLog(guild, embed) {
@@ -89,26 +98,26 @@ async function sendStaffLog(guild, embed) {
     .catch(() => null);
 
   if (channel?.isTextBased()) {
-    await channel.send({
-      embeds: [embed]
-    }).catch(console.error);
+    await channel.send({ embeds: [embed] }).catch(console.error);
   }
 }
+
+// ----------------------------------
+// COMMAND HANDLER
+// ----------------------------------
 
 async function handleCommand(interaction) {
   const { commandName, user } = interaction;
 
-  console.log("[Yats Debug] Command received:", {
+  console.log("[Yats] Command received:", {
     command: commandName,
     guildId: interaction.guildId,
     inGuild: interaction.inGuild(),
+    guildCached: Boolean(interaction.guild),
     channelId: interaction.channelId
   });
 
-  // ----------------------------------
   // PING
-  // ----------------------------------
-
   if (commandName === "ping") {
     return interaction.reply({
       content: `Pong! 🏓 Latency: ${client.ws.ping}ms`,
@@ -116,10 +125,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // ----------------------------------
   // HELP
-  // ----------------------------------
-
   if (commandName === "help") {
     return interaction.reply({
       content: [
@@ -157,10 +163,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // ----------------------------------
   // LOAD SERVER AND MEMBER
-  // ----------------------------------
-
   const { guild, member } = await getServerContext(interaction);
 
   if (!guild || !member) {
@@ -172,7 +175,7 @@ async function handleCommand(interaction) {
     });
 
     return interaction.reply({
-      content: "Yats couldn't load your Discord server or membership. Make sure the bot is installed in this server and try again.",
+      content: "Yats couldn't load your server or membership. Please try again and check the Railway logs if it continues.",
       ephemeral: true
     });
   }
@@ -398,7 +401,6 @@ async function handleCommand(interaction) {
       };
 
       data.reports.push(item);
-
       return item;
     });
 
@@ -524,9 +526,7 @@ async function handleCommand(interaction) {
       })
       .setTimestamp();
 
-    await channel.send({
-      embeds: [embed]
-    });
+    await channel.send({ embeds: [embed] });
 
     return interaction.reply({
       content: `Announcement posted in ${channel}.`,
@@ -551,7 +551,6 @@ async function handleCommand(interaction) {
       };
 
       data.bugs.push(item);
-
       return item;
     });
 
@@ -698,9 +697,7 @@ async function handleCommand(interaction) {
 
     await interaction.channel.permissionOverwrites.edit(
       everyone,
-      {
-        SendMessages: value
-      }
+      { SendMessages: value }
     );
 
     return interaction.reply({
@@ -711,10 +708,7 @@ async function handleCommand(interaction) {
     });
   }
 
-  // ----------------------------------
   // UNKNOWN COMMAND
-  // ----------------------------------
-
   return interaction.reply({
     content: "Unknown command.",
     ephemeral: true
@@ -778,6 +772,5 @@ client.on("interactionCreate", async interaction => {
   }
 
   await load();
-
   await client.login(process.env.DISCORD_TOKEN);
 })();
